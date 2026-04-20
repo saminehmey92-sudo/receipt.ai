@@ -1,71 +1,64 @@
 import streamlit as st
-import re
+import cv2
 import numpy as np
 from PIL import Image
 import easyocr
+import re
 
-# إعداد قارئ النصوص (OCR) - يدعم الإنجليزية حالياً لزيادة الدقة
+# تهيئة القارئ
 @st.cache_resource
-def load_ocr():
+def get_reader():
     return easyocr.Reader(['en'])
 
-reader = load_ocr()
+reader = get_reader()
 
-st.set_page_config(page_title="قاريء الإيصالات الذكي", page_icon="📸")
-st.markdown("""
-    <style>
-    .stApp { background-color: #f0f2f5; }
-    .stButton>button { background-color: #25D366; color: white; border-radius: 10px; font-weight: bold; }
-    </style>
-""", unsafe_allow_html=True)
+st.title("🟢 قارئ المرتجعات المطور")
 
-st.title("📸 قراءة المرتجعات الحقيقية")
-
-# التقاط الصورة
-camera_photo = st.camera_input("التقط صورة واضحة للإيصال")
+camera_photo = st.camera_input("التقط صورة للإيصال (حاول تقريب الكاميرا)")
 
 if camera_photo:
-    # معالجة الصورة
-    image = Image.open(camera_photo)
-    st.image(image, caption="تم التقاط الصورة", use_column_width=True)
+    # 1. تحويل الصورة لمعالجتها
+    file_bytes = np.asarray(bytearray(camera_photo.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
     
-    with st.spinner('جاري قراءة البيانات بدقة...'):
-        # تحويل الصورة إلى مصفوفة رقمية للقارئ
-        img_array = np.array(image)
-        result = reader.readtext(img_array)
+    # 2. تحسين جودة الصورة (تحويل لرمادي + زيادة التباين)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    enhanced_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    
+    st.image(enhanced_img, caption="الصورة بعد المعالجة البرمجية", width=300)
+    
+    with st.spinner('جاري التحليل العميق...'):
+        # 3. القراءة من الصورة المحسنة
+        results = reader.readtext(enhanced_img)
+        extracted_text = "\n".join([res[1] for res in results])
         
-        # تجميع النص المستخرج
-        extracted_text = "\n".join([res[1] for res in result])
+        st.write("### النص الذي تم رصده:")
+        # تنظيف النص المستخرج ليعرض المشتريات فقط
+        clean_text = st.text_area("تعديل النص المستخرج:", extracted_text, height=150)
         
-        st.success("تمت القراءة!")
-        
-        # عرض النص المستخرج للتعديل إذا لزم الأمر
-        raw_data = st.text_area("النص المستخرج (يمكنك تعديله):", extracted_text, height=200)
-
-        # منطق تحليل البنود والأسعار
-        if st.button("تحويل النص إلى قائمة مشتريات"):
-            lines = raw_data.strip().split('\n')
+        if st.button("تحويل إلى قائمة اختيار"):
             items = []
+            lines = clean_text.split('\n')
             for line in lines:
-                # البحث عن الأسعار (أرقام بها فاصلة عشرية)
+                # محاولة صيد أي سعر
                 price_match = re.search(r"(\d+[\.,]\d{2})", line)
                 if price_match:
                     price = float(price_match.group(1).replace(',', '.'))
-                    # تنظيف اسم المنتج من الرموز
+                    # تنظيف الاسم من الأرقام والرموز
                     name = re.sub(r'[^a-zA-Z\s]', '', line.replace(price_match.group(1), "")).strip()
-                    if not name: name = "منتج غير معروف"
+                    if not name: name = "Item"
                     items.append({"name": name, "price": price})
             
-            st.session_state.receipt_items = items
-            st.session_state.show_list = True
+            st.session_state.items = items
 
-# عرض قائمة المرتجعات
-if "show_list" in st.session_state and st.session_state.show_list:
+# عرض القائمة التفاعلية
+if "items" in st.session_state:
     st.write("---")
-    st.subheader("✅ حدد المرتجعات من القائمة:")
-    total_refund = 0.0
-    for i, item in enumerate(st.session_state.receipt_items):
-        if st.checkbox(f"{item['name']} - ${item['price']}", key=f"item_{i}"):
-            total_refund += item['price']
+    total = 0.0
+    for i, item in enumerate(st.session_state.items):
+        if st.checkbox(f"{item['name']} - ${item['price']}", key=f"sel_{i}"):
+            total += item['price']
     
-    st.metric("إجمالي المبلغ المسترد", f"${total_refund:.2f}")
+    st.metric("إجمالي المرتجع", f"${total:.2f}")
+    if total > 0:
+        st.success("اضغط 'تأكيد' لإتمام العملية")
