@@ -1,54 +1,63 @@
 import streamlit as st
 import re
 
-# 1. إعدادات الهوية البصرية (اللون الأخضر المطلوب)
-st.set_page_config(page_title="Receipt Manager", page_icon="💸")
-custom_style = """
+# إعدادات الواجهة والألوان
+st.set_page_config(page_title="مدير الإيصالات", page_icon="🟢")
+st.markdown("""
     <style>
     .stApp { background-color: #f0f2f5; }
-    .stButton>button { background-color: #25D366; color: white; border-radius: 20px; border: none; }
-    .stCheckbox { color: #075E54; }
-    .header-box { background-color: #075E54; padding: 20px; border-radius: 10px; color: white; text-align: center; }
+    .stButton>button { background-color: #25D366; color: white; width: 100%; border-radius: 10px; }
+    .main-header { color: #075E54; text-align: center; font-weight: bold; }
     </style>
-"""
-st.markdown(custom_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# واجهة التطبيق
-st.markdown('<div class="header-box"><h1>مشروع مدير الإيصالات الذكي</h1></div>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">🟢 نظام إدارة المرتجعات</h1>', unsafe_allow_html=True)
 
-# 2. منطقة إدخال البيانات (الـ API والنص)
-with st.sidebar:
-    st.header("الإعدادات")
-    api_key = st.text_input("أدخل مفتاح API (OpenAI/HuggingFace)", type="password")
-    st.write("---")
-    st.success("الهوية البصرية: WhatsApp Green Active")
+# 1. إدخال البيانات
+raw_data = st.text_area("أدخل نص الإيصال هنا:", 
+                         "MILK 4.99\nBREAD 3.50\nCHICKEN 12.45", height=150)
 
-# 3. محاكاة تحليل الإيصال (المرحلة الثانية)
-st.subheader("📄 بيانات الإيصال")
-raw_data = st.text_area("أدخل نص الإيصال هنا (مثال: Stater Bros)", 
-                         "MILK GALLON 4.99\nBREAD WHOLE 3.50\nCHICKEN BREAST 12.45\nAPPLES FUJI 2.10")
-
+# 2. منطق تحليل البيانات وحفظها في الذاكرة (Session State)
 if st.button("تحليل المشتريات"):
-    # دالة الاستخراج باستخدام Regex
-    pattern = r"(.+?)\s+([\d,]+\.\d{2})"
-    items = []
     lines = raw_data.strip().split('\n')
+    items = []
+    for line in lines:
+        price_match = re.search(r"(\d+[\.,]\d{2})", line)
+        if price_match:
+            price = float(price_match.group(1).replace(',', '.'))
+            name = line.replace(price_match.group(1), "").strip()
+            items.append({"name": name, "price": price})
     
-    st.write("### حدد المنتجات التي ترغب في إرجاعها:")
+    # حفظ القائمة في ذاكرة المتصفح
+    st.session_state.receipt_items = items
+    st.session_state.show_list = True
+
+# 3. عرض القائمة إذا تم التحليل بنجاح
+if "show_list" in st.session_state and st.session_state.show_list:
+    st.write("---")
+    st.subheader("✅ اختر المنتجات المراد إرجاعها:")
     
     total_refund = 0.0
-    for i, line in enumerate(lines):
-        match = re.search(pattern, line)
-        if match:
-            name = match.group(1).strip()
-            price = float(match.group(2))
-            
-            # عرض كل بند مع اختيار (Checkbox)
-            if st.checkbox(f"{name} - ${price}", key=f"item_{i}"):
-                total_refund += price
+    selected_items = []
+
+    for i, item in enumerate(st.session_state.receipt_items):
+        # استخدام Checkbox لكل منتج
+        is_selected = st.checkbox(f"{item['name']} - ${item['price']}", key=f"item_{i}")
+        if is_selected:
+            total_refund += item['price']
+            selected_items.append(item['name'])
     
     st.divider()
-    st.metric(label="إجمالي المبلغ المسترد", value=f"${total_refund:.2f}")
     
+    # عرض النتائج بشكل جذاب (الأخضر المميز)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("إجمالي المرتجع", f"${total_refund:.2f}")
+    with col2:
+        if total_refund > 0:
+            st.success(f"تم تحديد {len(selected_items)} أصناف")
+
     if total_refund > 0:
-        st.info(f"سيتم تجهيز طلب المرتجعات لمبلغ {total_refund} دولار.")
+        if st.button("تأكيد عملية الإرجاع"):
+            st.balloons()
+            st.info(f"جاري معالجة إرجاع: {', '.join(selected_items)}")
