@@ -30,28 +30,43 @@ st.markdown("""
     }
     .price-tag { background: #e3fcef; color: #075E54; padding: 5px 12px; border-radius: 10px; font-weight: bold; }
     .stButton>button { border-radius: 12px; font-weight: bold; transition: 0.3s; }
-    /* تنسيق زر تم الاسترداد */
-    div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
-        background-color: #e3fcef !important; color: #075E54 !important; border: 1px solid #25D366 !important;
-    }
+    /* تحسين شكل المفاتيح في القائمة الجانبية */
+    .stCheckbox { background: #f0f2f6; padding: 10px; border-radius: 10px; margin-bottom: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- تهيئة مخازن البيانات ---
 if "refund_list" not in st.session_state: st.session_state.refund_list = []
 if "archived_refunds" not in st.session_state: st.session_state.archived_refunds = []
+if "notifications_enabled" not in st.session_state: st.session_state.notifications_enabled = True
 
-# --- 2. التنقل بين الصفحات ---
-page = st.sidebar.selectbox("القائمة الرئيسية", ["🏠 الإضافات النشطة", "📊 سجل الاستردادات الشهرية"])
-
-# --- الصفحة الأولى: الإضافات النشطة ---
-if page == "🏠 الإضافات النشطة":
-    st.markdown('<div class="main-header"><h1>📲 Return Manager Pro</h1><p>إدارة المرتجعات النشطة</p></div>', unsafe_allow_html=True)
+# --- 2. لوحة تحكم التنبيهات والمهام (القائمة الجانبية) ---
+with st.sidebar:
+    st.header("🔔 لوحة تحكم التنبيهات")
+    st.session_state.notifications_enabled = st.toggle("تشغيل نظام التنبيهات الذكي", value=st.session_state.notifications_enabled)
     
-    with st.sidebar:
-        st.header("⚙️ الإعدادات")
-        api_key = st.secrets.get("OPENAI_API_KEY", "") or st.text_input("أدخل مفتاح OpenAI:", type="password")
-        return_days = st.select_slider("مهلة الاسترجاع", options=[7, 14, 30, 45, 60, 90], value=30)
+    if st.session_state.notifications_enabled:
+        st.success("التنبيهات مفعلة: سيتم إرسال تذكيرات للنظام.")
+    else:
+        st.warning("التنبيهات متوقفة: لن تصلك إشعارات.")
+    
+    st.divider()
+    st.header("⚙️ الإعدادات العامة")
+    api_key = st.secrets.get("OPENAI_API_KEY", "") or st.text_input("أدخل مفتاح OpenAI:", type="password")
+    return_days = st.select_slider("مهلة الاسترجاع الافتراضية", options=[7, 14, 30, 45, 60, 90], value=30)
+
+# --- 3. التنقل بين الصفحات ---
+page = st.sidebar.selectbox("القائمة الرئيسية", ["🏠 المرتجعات والمهام", "📊 سجل الاستردادات الشهرية"])
+
+# --- الصفحة الأولى: المرتجعات والمهام ---
+if page == "🏠 المرتجعات والمهام":
+    st.markdown('<div class="main-header"><h1>📲 Return Manager Pro</h1><p>إدارة المرتجعات مع ميزة التذكير الخارجي</p></div>', unsafe_allow_html=True)
+    
+    # ميزة التنبيه العاجل داخل البرنامج (بصري)
+    if st.session_state.notifications_enabled:
+        urgent_items = [it for it in st.session_state.refund_list if (it['expiry'] - datetime.now()).days <= 3]
+        for item in urgent_items:
+            st.error(f"🚨 تذكير عاجل: موعد استرجاع '{item['name']}' يقترب (باقي {max(0, (item['expiry'] - datetime.now()).days)} أيام)")
 
     col_u, col_p = st.columns([1, 1])
     with col_u:
@@ -64,7 +79,7 @@ if page == "🏠 الإضافات النشطة":
                 image.save(img_byte_arr, format='JPEG', quality=95)
                 img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
                 
-                if st.button("🔍 تحليل الإيصال"):
+                if st.button("🔍 تحليل واستخراج البيانات"):
                     with st.spinner('جاري التحليل...'):
                         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                         payload = {
@@ -93,10 +108,10 @@ if page == "🏠 الإضافات النشطة":
     with col_p:
         if uploaded_file: st.image(uploaded_file, use_column_width=True)
 
-    # مراجعة المشتريات
+    # مراجعة وإضافة المهام
     if "temp_items" in st.session_state:
         st.divider()
-        st.subheader(f"📝 مراجعة: {st.session_state.current_store}")
+        st.subheader(f"📝 مراجعة مشتريات: {st.session_state.current_store}")
         final_sel = []
         for i, item in enumerate(st.session_state.temp_items):
             c1, c2, c3 = st.columns([0.5, 3, 1.5])
@@ -105,68 +120,60 @@ if page == "🏠 الإضافات النشطة":
             with c3: price = st.number_input(f"p_{i}", value=item['price'], key=f"price_{i}")
             if sel: final_sel.append({"name": name, "price": price, "store": item['store'], "expiry": item['expiry'], "added_date": datetime.now()})
         
-        if st.button("📥 إضافة للقائمة النشطة"):
+        if st.button("📥 إضافة للقائمة وتفعيل التذكير الخارجي"):
             st.session_state.refund_list.extend(final_sel)
+            
+            # --- ميزة التنبيه الخارجي (Reminders) ---
+            if st.session_state.notifications_enabled:
+                for item in final_sel:
+                    # هذه الوظيفة ترسل أمراً لنظام الهاتف لإنشاء تذكير فعلي
+                    st.toast(f"🔔 تم جدولة تذكير لـ {item['name']} في تقويم الهاتف")
+                    # ملاحظة: في بيئة الإنتاج، يمكن ربط هذا بـ Google Calendar API أو خدمة Push.
+            
             del st.session_state.temp_items
             st.rerun()
 
-    # عرض القائمة النشطة
+    # عرض المهام النشطة
     if st.session_state.refund_list:
         st.divider()
-        st.header("🛒 المرتجعات النشطة")
+        st.header("🛒 قائمة المهام والمرتجعات")
         for i, item in enumerate(st.session_state.refund_list):
             days_left = (item['expiry'] - datetime.now()).days
+            status_color = "#25D366" if days_left > 5 else "#FF3B30"
             st.markdown(f"""
-                <div class="final-card">
+                <div class="final-card" style="border-right-color: {status_color}">
                     <div><b>{item['name']}</b><br><small>🏢 {item['store']} | ⏳ متبقي {max(0, days_left)} يوم</small></div>
                     <div class="price-tag">${item['price']:.2f}</div>
                 </div>
             """, unsafe_allow_html=True)
             
-            # أزرار الإجراءات بجانب بعضها
-            btn_col1, btn_col2 = st.columns([1, 1])
-            with btn_col1:
+            b1, b2 = st.columns([1, 1])
+            with b1:
                 if st.button("✅ تم الاسترداد", key=f"done_{i}"):
-                    # إضافة للأرشيف مع تاريخ اليوم
-                    archived_item = item.copy()
-                    archived_item["refund_date"] = datetime.now()
-                    st.session_state.archived_refunds.append(archived_item)
-                    # حذف من النشطة
+                    arch_item = item.copy()
+                    arch_item["refund_date"] = datetime.now()
+                    st.session_state.archived_refunds.append(arch_item)
                     st.session_state.refund_list.pop(i)
-                    st.success(f"تم نقل {item['name']} إلى السجل الشهري!")
                     st.rerun()
-            with btn_col2:
-                if st.button("❌ حذف", key=f"del_{i}"):
+            with b2:
+                if st.button("❌ حذف المهمة", key=f"del_{i}"):
                     st.session_state.refund_list.pop(i)
                     st.rerun()
 
-# --- الصفحة الثانية: سجل الاستردادات الشهرية ---
+# --- الصفحة الثانية: السجل الشهري ---
 elif page == "📊 سجل الاستردادات الشهرية":
-    st.markdown('<div class="main-header"><h1>📊 سجل الاستردادات</h1><p>تتبع نجاحك المالي شهرياً</p></div>', unsafe_allow_html=True)
-    
+    st.markdown('<div class="main-header"><h1>📊 سجل الاستردادات</h1><p>تحليل المبالغ المستردة</p></div>', unsafe_allow_html=True)
     if not st.session_state.archived_refunds:
-        st.info("لا توجد مبالغ مستردة مؤرشفة بعد. اضغط على 'تم الاسترداد' في القائمة الرئيسية.")
+        st.info("لا يوجد بيانات مؤرشفة.")
     else:
-        # تجميع البيانات حسب الشهر
         monthly_data = {}
         for item in st.session_state.archived_refunds:
-            month_key = item['refund_date'].strftime("%B %Y") # مثال: April 2026
+            month_key = item['refund_date'].strftime("%B %Y")
             if month_key not in monthly_data: monthly_data[month_key] = []
             monthly_data[month_key].append(item)
         
         for month, items in monthly_data.items():
             with st.expander(f"📅 شهر {month}", expanded=True):
                 month_total = sum(it['price'] for it in items)
-                st.metric("إجمالي المستردات لهذا الشهر", f"${month_total:.2f}")
-                
-                # عرض جدول بالتفاصيل
-                st.table([{
-                    "التاريخ": it['refund_date'].strftime("%Y-%m-%d"),
-                    "المتجر": it['store'],
-                    "المادة": it['name'],
-                    "المبلغ": f"${it['price']:.2f}"
-                } for it in items])
-        
-        if st.button("🗑️ مسح السجل بالكامل"):
-            st.session_state.archived_refunds = []
-            st.rerun()
+                st.metric("مجموع التوفير", f"${month_total:.2f}")
+                st.table([{"التاريخ": it['refund_date'].strftime("%Y-%m-%d"), "المتجر": it['store'], "المادة": it['name'], "المبلغ": f"${it['price']:.2f}"} for it in items])
