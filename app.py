@@ -1,64 +1,81 @@
 import streamlit as st
-import cv2
-import numpy as np
+import re
 from PIL import Image
 import easyocr
-import re
+import numpy as np
 
-# تهيئة القارئ
+# تهيئة القارئ في الذاكرة لمرة واحدة
 @st.cache_resource
-def get_reader():
+def load_reader():
     return easyocr.Reader(['en'])
 
-reader = get_reader()
+reader = load_reader()
 
-st.title("🟢 قارئ المرتجعات المطور")
+# تنسيق الواجهة باللون الأخضر (WhatsApp/Cash App)
+st.set_page_config(page_title="مدير الإيصالات", page_icon="🟢")
+st.markdown("""
+    <style>
+    .stApp { background-color: #f8f9fa; }
+    .stButton>button { background-color: #25D366; color: white; border-radius: 12px; font-weight: bold; width: 100%; }
+    .stHeader { color: #075E54; }
+    </style>
+""", unsafe_allow_html=True)
 
-camera_photo = st.camera_input("التقط صورة للإيصال (حاول تقريب الكاميرا)")
+st.title("🟢 رفع وتحليل الإيصالات")
 
-if camera_photo:
-    # 1. تحويل الصورة لمعالجتها
-    file_bytes = np.asarray(bytearray(camera_photo.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, 1)
+# 1. خيار رفع الصورة من المعرض
+uploaded_file = st.file_uploader("اختر صورة الإيصال من المعرض (Gallery)", type=['jpg', 'jpeg', 'png'])
+
+if uploaded_file is not None:
+    # عرض الصورة المختارة
+    image = Image.open(uploaded_file)
+    st.image(image, caption="تم تحميل الصورة بنجاح", use_column_width=True)
     
-    # 2. تحسين جودة الصورة (تحويل لرمادي + زيادة التباين)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    enhanced_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    
-    st.image(enhanced_img, caption="الصورة بعد المعالجة البرمجية", width=300)
-    
-    with st.spinner('جاري التحليل العميق...'):
-        # 3. القراءة من الصورة المحسنة
-        results = reader.readtext(enhanced_img)
-        extracted_text = "\n".join([res[1] for res in results])
+    with st.spinner('جاري استخراج البيانات من الصورة...'):
+        # تحويل الصورة إلى صيغة يفهمها القارئ
+        img_array = np.array(image)
+        result = reader.readtext(img_array)
         
-        st.write("### النص الذي تم رصده:")
-        # تنظيف النص المستخرج ليعرض المشتريات فقط
-        clean_text = st.text_area("تعديل النص المستخرج:", extracted_text, height=150)
+        # تجميع النصوص
+        extracted_text = "\n".join([res[1] for res in result])
         
-        if st.button("تحويل إلى قائمة اختيار"):
+        st.success("تمت القراءة بنجاح!")
+        
+        # عرض النص للتعديل
+        clean_text = st.text_area("النص المستخرج (راجع الأسعار والأسماء):", extracted_text, height=150)
+        
+        if st.button("تحويل النص إلى قائمة مرتجعات"):
             items = []
             lines = clean_text.split('\n')
             for line in lines:
-                # محاولة صيد أي سعر
+                # البحث عن أي رقم عشري (سعر)
                 price_match = re.search(r"(\d+[\.,]\d{2})", line)
                 if price_match:
                     price = float(price_match.group(1).replace(',', '.'))
-                    # تنظيف الاسم من الأرقام والرموز
+                    # استخراج اسم المنتج (تجاهل الرموز)
                     name = re.sub(r'[^a-zA-Z\s]', '', line.replace(price_match.group(1), "")).strip()
                     if not name: name = "Item"
                     items.append({"name": name, "price": price})
             
-            st.session_state.items = items
+            st.session_state.processed_items = items
 
-# عرض القائمة التفاعلية
-if "items" in st.session_state:
-    st.write("---")
-    total = 0.0
-    for i, item in enumerate(st.session_state.items):
-        if st.checkbox(f"{item['name']} - ${item['price']}", key=f"sel_{i}"):
-            total += item['price']
+# 2. عرض القائمة التفاعلية للمرتجعات
+if "processed_items" in st.session_state:
+    st.divider()
+    st.subheader("✅ حدد بنود المرتجعات:")
     
-    st.metric("إجمالي المرتجع", f"${total:.2f}")
-    if total > 0:
-        st.success("اضغط 'تأكيد' لإتمام العملية")
+    total_refund = 0.0
+    selected_names = []
+    
+    for i, item in enumerate(st.session_state.processed_items):
+        if st.checkbox(f"{item['name']} — ${item['price']}", key=f"check_{i}"):
+            total_refund += item['price']
+            selected_names.append(item['name'])
+            
+    st.divider()
+    st.metric("إجمالي المبلغ المسترد", f"${total_refund:.2f}")
+    
+    if total_refund > 0:
+        if st.button("تأكيد العملية"):
+            st.balloons()
+            st.success(f"تم إرسال طلب إرجاع لـ {len(selected_names)} منتجات.")
