@@ -3,29 +3,28 @@ import base64
 import requests
 import re
 
-# إعدادات الواجهة (ألوان WhatsApp و Cash App)
+# 1. الإعدادات والواجهة
 st.set_page_config(page_title="مدير المرتجعات الذكي", page_icon="🟢")
 st.markdown("""
     <style>
     .stApp { background-color: #f8f9fa; }
     .stButton>button { background-color: #25D366; color: white; border-radius: 12px; font-weight: bold; }
-    .stTextInput>div>div>input { background-color: white; border: 1px solid #25D366; }
-    .refund-card { background-color: #e3fcef; padding: 15px; border-radius: 10px; border-right: 5px solid #25D366; margin-bottom: 10px; }
+    .refund-card { background-color: #e3fcef; padding: 12px; border-radius: 8px; border-right: 5px solid #25D366; margin-bottom: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🟢 معالج المرتجعات المرن")
 
-# إدارة المفتاح من Secrets
+# إدارة المفتاح
 api_key = st.secrets.get("OPENAI_API_KEY", "")
 if not api_key:
-    with st.sidebar:
-        api_key = st.text_input("أدخل OpenAI API Key:", type="password")
+    api_key = st.sidebar.text_input("أدخل OpenAI API Key:", type="password")
 
 uploaded_file = st.file_uploader("ارفع صورة الإيصال من المعرض", type=['jpg', 'jpeg', 'png'])
 
+# 2. دالة الاتصال "المصفحة"
 def analyze_receipt(image_b64, key):
-    headers = {"Authorization": f"Bearer {key}"}
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     payload = {
         "model": "gpt-4o",
         "messages": [{
@@ -36,64 +35,69 @@ def analyze_receipt(image_b64, key):
             ]
         }]
     }
-    response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-    return response.json()['choices'][0]['message']['content']
+    try:
+        response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers, timeout=30)
+        
+        # التأكد من أن الاستجابة ناجحة وبتنسيق JSON
+        if response.status_code != 200:
+            return f"API_ERROR: {response.status_code} - {response.text}"
+            
+        return response.json()['choices'][0]['message']['content']
+    except Exception as e:
+        return f"SYSTEM_ERROR: {str(e)}"
 
+# 3. المعالجة
 if uploaded_file and api_key:
     img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
     
     if st.button("🚀 قراءة بيانات الإيصال"):
         with st.spinner('جاري تحليل الصورة...'):
             raw_output = analyze_receipt(img_b64, api_key)
-            items = []
-            for line in raw_output.split('\n'):
-                match = re.search(r"(.+?)[|:]\s*([\d.]+)", line)
-                if match:
-                    items.append({"name": match.group(1).strip(), "price": float(match.group(2))})
-            st.session_state.temp_items = items
+            
+            if "ERROR" in raw_output:
+                st.error(f"فشل الاتصال: {raw_output}")
+            else:
+                items = []
+                for line in raw_output.split('\n'):
+                    match = re.search(r"(.+?)[|:]\s*([\d.]+)", line)
+                    if match:
+                        items.append({"name": match.group(1).strip(), "price": float(match.group(2))})
+                st.session_state.temp_items = items
 
-# 1. مرحلة التدقيق والتعديل
+# 4. مرحلة التعديل والتدقيق (تعديل السعر)
 if "temp_items" in st.session_state:
     st.divider()
-    st.subheader("📝 راجع وعدل البيانات المستخرجة:")
+    st.subheader("📝 مراجعة وتعديل البيانات:")
     
     updated_items = []
     for i, item in enumerate(st.session_state.temp_items):
-        col1, col2, col3 = st.columns([0.5, 3, 1.5])
-        with col1:
+        col_check, col_name, col_price = st.columns([0.5, 3, 1.5])
+        with col_check:
             selected = st.checkbox("", key=f"sel_{i}")
-        with col2:
-            new_name = st.text_input(f"المنتج {i+1}", item['name'], key=f"name_{i}")
-        with col3:
-            new_price = st.number_input(f"السعر {i+1}", value=item['price'], format="%.2f", key=f"price_{i}")
+        with col_name:
+            new_name = st.text_input(f"اسم {i}", item['name'], key=f"n_{i}", label_visibility="collapsed")
+        with col_price:
+            new_price = st.number_input(f"سعر {i}", value=item['price'], format="%.2f", key=f"p_{i}", label_visibility="collapsed")
         
         if selected:
             updated_items.append({"name": new_name, "price": new_price})
 
-    if st.button("📥 نقل العناصر المختارة إلى قائمة المرتجعات"):
+    if st.button("📥 نقل إلى قائمة المرتجعات"):
         if updated_items:
             st.session_state.refund_list = updated_items
-            st.success(f"تم نقل {len(updated_items)} عنصر إلى القائمة!")
+            st.success("تم التجهيز!")
         else:
-            st.warning("يرجى تحديد عنصر واحد على الأقل.")
+            st.warning("حدد عناصر أولاً")
 
-# 2. عرض قائمة المرتجعات النهائية
+# 5. عرض القائمة النهائية
 if "refund_list" in st.session_state:
     st.divider()
-    st.subheader("📋 قائمة المرتجعات النهائية")
+    st.subheader("📋 القائمة النهائية للمرتجعات")
+    total = sum(item['price'] for item in st.session_state.refund_list)
     
-    total_refund = 0.0
     for item in st.session_state.refund_list:
-        st.markdown(f"""
-            <div class="refund-card">
-                <b>{item['name']}</b> <br> 
-                <span style="color: #075E54;">المبلغ: ${item['price']:.2f}</span>
-            </div>
-        """, unsafe_allow_html=True)
-        total_refund += item['price']
+        st.markdown(f'<div class="refund-card"><b>{item["name"]}</b>: ${item["price"]:.2f}</div>', unsafe_allow_html=True)
     
-    st.metric("إجمالي مبلغ الإرجاع", f"${total_refund:.2f}")
-    
-    if st.button("✅ تأكيد القائمة النهائية"):
+    st.metric("الإجمالي المسترد", f"${total:.2f}")
+    if st.button("✅ تأكيد وحفظ"):
         st.balloons()
-        st.success("تم حفظ قائمة المرتجعات بنجاح.")
