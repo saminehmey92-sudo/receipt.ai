@@ -2,9 +2,11 @@ import streamlit as st
 import base64
 import requests
 import re
+import io
 from datetime import datetime, timedelta
+from PIL import Image
 
-# --- 1. الإعدادات وتصميم واجهة المستخدم (Mobile-First UI) ---
+# --- 1. إعدادات الواجهة الاحترافية ---
 st.set_page_config(page_title="Return Manager Pro", page_icon="📲", layout="wide")
 
 st.markdown("""
@@ -12,7 +14,6 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Roboto', sans-serif; background-color: #f4f7f6; }
     
-    /* الهيدر العلوي */
     .main-header {
         background: linear-gradient(135deg, #075E54 0%, #25D366 100%);
         padding: 2.5rem;
@@ -23,7 +24,6 @@ st.markdown("""
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
 
-    /* بطاقات التعديل */
     .edit-card {
         background: white;
         padding: 15px;
@@ -32,7 +32,6 @@ st.markdown("""
         border: 1px solid #e0e0e0;
     }
 
-    /* بطاقات القائمة النهائية */
     .final-card {
         background: white;
         padding: 18px;
@@ -54,7 +53,6 @@ st.markdown("""
         font-size: 1.1rem;
     }
 
-    /* أزرار عصرية */
     .stButton>button {
         width: 100%;
         border-radius: 15px;
@@ -65,57 +63,56 @@ st.markdown("""
         border: none;
         font-size: 1.1rem;
     }
-    
-    .stMetric {
-        background: #075E54;
-        padding: 15px;
-        border-radius: 15px;
-        color: white !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
-# عرض الهيدر
-st.markdown('<div class="main-header"><h1>📲 Return Manager Pro</h1><p>نظام إدارة المرتجعات الذكي</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1>📲 Return Manager Pro</h1><p>نظام ذكي يدعم جميع صيغ الصور (AVIF, PNG, JPG)</p></div>', unsafe_allow_html=True)
 
 # --- 2. الإعدادات الجانبية ---
 with st.sidebar:
     st.header("⚙️ الإعدادات")
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
-    if not api_key:
-        api_key = st.text_input("أدخل مفتاح OpenAI:", type="password")
-    
-    return_days = st.select_slider("مهلة الاسترجاع الافتراضية (أيام)", options=[7, 14, 30, 45, 60, 90], value=30)
-    st.info("سيتم حساب تاريخ الانتهاء تلقائياً لكل إيصال ترفعه.")
+    api_key = st.secrets.get("OPENAI_API_KEY", "") or st.text_input("أدخل مفتاح OpenAI:", type="password")
+    return_days = st.select_slider("مهلة الاسترجاع الافتراضية", options=[7, 14, 30, 45, 60, 90], value=30)
 
-# --- 3. منطقة الرفع والتحليل ---
+# --- 3. منطقة الرفع والتحليل (دعم AVIF) ---
 col_u, col_p = st.columns([1, 1])
 
 with col_u:
-    st.markdown("### 📸 الخطوة 1: تصوير الإيصال")
-    uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png'])
+    st.markdown("### 📸 الخطوة 1: تصوير أو رفع الإيصال")
+    # تم إضافة avif و webp و heic للقائمة
+    uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png', 'webp', 'avif', 'heic'])
 
     if uploaded_file and api_key:
-        img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
-        if st.button("🔍 تحليل البيانات واستخراج المتجر"):
-            with st.spinner('جاري تحليل الصورة والتعرف على المتجر...'):
-                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "gpt-4o",
-                    "messages": [{"role": "user", "content": [
-                        {"type": "text", "text": "Identify Store Name and list all items with prices. Format: STORE: [Name] ITEMS: Name | Price"},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                    ]}]
-                }
-                try:
+        try:
+            # استخدام Pillow لفتح الصورة ومعالجتها (لحل مشكلة AVIF)
+            image = Image.open(uploaded_file)
+            
+            # تحويل الصورة إلى RGB (ضروري لصيغ AVIF و PNG التي تحتوي على شفافية)
+            if image.mode in ("RGBA", "P"):
+                image = image.convert("RGB")
+            
+            # حفظ الصورة في الذاكرة بصيغة JPEG ليرسلها التطبيق لـ OpenAI
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG")
+            img_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            if st.button("🔍 تحليل البيانات"):
+                with st.spinner('جاري المسح الضوئي وتحويل الصيغة...'):
+                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                    payload = {
+                        "model": "gpt-4o",
+                        "messages": [{"role": "user", "content": [
+                            {"type": "text", "text": "Identify Store Name and list all items with prices. Format: STORE: [Name] ITEMS: Name | Price"},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                        ]}]
+                    }
+                    
                     response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
                     raw_output = response.json()['choices'][0]['message']['content']
                     
-                    # استخراج اسم المتجر
                     store_match = re.search(r"STORE:\s*(.*)", raw_output)
                     detected_store = store_match.group(1).strip() if store_match else "متجر غير معروف"
                     
-                    # استخراج المنتجات
                     items = []
                     for line in raw_output.split('\n'):
                         m = re.search(r"(.+?)[|:]\s*([\d.]+)", line)
@@ -131,58 +128,46 @@ with col_u:
                         st.session_state.temp_items = items
                         st.session_state.current_store = detected_store
                     else:
-                        st.error("لم يتم العثور على منتجات واضحة. حاول رفع صورة أفضل.")
-                except Exception as e:
-                    st.error(f"خطأ في الاتصال: {str(e)}")
+                        st.error("لم نتمكن من قراءة المنتجات. حاول رفع صورة أوضح.")
+        except Exception as e:
+            st.error(f"حدث خطأ أثناء معالجة الصورة: {str(e)}")
 
 with col_p:
     if uploaded_file:
-        st.image(uploaded_file, use_column_width=True, caption="الصورة المرفوعة")
+        st.image(uploaded_file, use_column_width=True, caption="المستند المرفوع")
 
-# --- 4. واجهة المراجعة والتعديل ---
+# --- 4. واجهة التعديل ---
 if "temp_items" in st.session_state and st.session_state.temp_items:
     st.divider()
-    st.subheader(f"📝 مراجعة مشتريات: {st.session_state.current_store}")
+    st.subheader(f"📝 مراجعة: {st.session_state.current_store}")
     
     final_sel = []
     for i, item in enumerate(st.session_state.temp_items):
         st.markdown('<div class="edit-card">', unsafe_allow_html=True)
         c1, c2, c3 = st.columns([0.5, 3, 1.5])
-        with c1: 
-            sel = st.checkbox("", key=f"s_{i}")
-        with c2: 
-            name = st.text_input(f"n_{i}", item['name'], key=f"name_{i}", label_visibility="collapsed")
-        with c3: 
-            price = st.number_input(f"p_{i}", value=item['price'], format="%.2f", key=f"price_{i}", label_visibility="collapsed")
+        with c1: sel = st.checkbox("", key=f"s_{i}")
+        with c2: name = st.text_input(f"n_{i}", item['name'], key=f"name_{i}", label_visibility="collapsed")
+        with c3: price = st.number_input(f"p_{i}", value=item['price'], format="%.2f", key=f"price_{i}", label_visibility="collapsed")
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        if sel:
-            final_sel.append({"name": name, "price": price, "store": item['store'], "expiry": item['expiry']})
+        if sel: final_sel.append({"name": name, "price": price, "store": item['store'], "expiry": item['expiry']})
     
-    if st.button("📥 إضافة المختار إلى قائمة المرتجعات النهائية"):
-        if "refund_list" not in st.session_state:
-            st.session_state.refund_list = []
+    if st.button("📥 حفظ في القائمة النهائية"):
+        if "refund_list" not in st.session_state: st.session_state.refund_list = []
         st.session_state.refund_list.extend(final_sel)
-        del st.session_state.temp_items # تنظيف القائمة المؤقتة
-        st.balloons()
+        del st.session_state.temp_items
         st.rerun()
 
-# --- 5. القائمة النهائية (تصميم الموبايل والترتيب) ---
-if "refund_list" in st.session_state and len(st.session_state.refund_list) > 0:
+# --- 5. القائمة النهائية ---
+if "refund_list" in st.session_state and st.session_state.refund_list:
     st.divider()
-    st.header("🛒 قائمة المرتجعات النشطة")
+    st.header("🛒 المرتجعات النشطة")
     
-    # خيارات الترتيب (تحديث الاسم ليتوافق مع الشرط)
-    sort_by = st.radio("الترتيب حسب:", ["الأحدث مضافاً", "الوقت المتبقي", "المتجر"], horizontal=True)
-
-    if sort_by == "الوقت المتبقي":
-        st.session_state.refund_list.sort(key=lambda x: x['expiry'])
-    elif sort_by == "المتجر":
-        st.session_state.refund_list.sort(key=lambda x: x['store'])
+    sort_by = st.radio("الترتيب حسب:", ["الأحدث", "الوقت المتبقي", "المتجر"], horizontal=True)
+    if sort_by == "الوقت المتبقي": st.session_state.refund_list.sort(key=lambda x: x['expiry'])
+    elif sort_by == "المتجر": st.session_state.refund_list.sort(key=lambda x: x['store'])
 
     for i, item in enumerate(st.session_state.refund_list):
         days_left = (item['expiry'] - datetime.now()).days
-        # تغيير لون الحافة إذا كان الوقت ضيقاً
         status_color = "#25D366" if days_left > 5 else "#FF3B30"
         
         col_card, col_del = st.columns([5, 1])
@@ -190,25 +175,16 @@ if "refund_list" in st.session_state and len(st.session_state.refund_list) > 0:
             st.markdown(f"""
                 <div class="final-card" style="border-right-color: {status_color}">
                     <div>
-                        <div style="font-size: 1.2rem; font-weight: bold; color: #333;">{item['name']}</div>
-                        <div style="color: #666; font-size: 0.9rem;">🏢 {item['store']}</div>
-                        <div style="font-size: 0.8rem; background: #eee; padding: 2px 8px; border-radius: 5px; display: inline-block; margin-top: 5px;">
-                            ⏳ متبقي: {max(0, days_left)} يوم
-                        </div>
+                        <div style="font-size: 1.1rem; font-weight: bold;">{item['name']}</div>
+                        <div style="color: #666; font-size: 0.8rem;">🏢 {item['store']} | ⏳ متبقي: {max(0, days_left)} يوم</div>
                     </div>
                     <div class="price-tag">${item['price']:.2f}</div>
                 </div>
             """, unsafe_allow_html=True)
         with col_del:
-            if st.button("❌", key=f"del_{i}", help="حذف من القائمة"):
+            if st.button("❌", key=f"del_{i}"):
                 st.session_state.refund_list.pop(i)
                 st.rerun()
 
-    # الإجمالي النهائي بتصميم جذاب
     total = sum(item['price'] for item in st.session_state.refund_list)
-    st.markdown(f"""
-        <div style="background: #075E54; color: white; padding: 25px; border-radius: 20px; text-align: center; margin-top: 20px; box-shadow: 0 4px 15px rgba(7, 94, 84, 0.3);">
-            <span style="font-size: 1.2rem; opacity: 0.9;">إجمالي مبلغ الاسترداد المتوقع</span><br>
-            <span style="font-size: 3rem; font-weight: bold;">${total:.2f}</span>
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<div style="background:#075E54;color:white;padding:20px;border-radius:15px;text-align:center;font-size:1.5rem;">الإجمالي: <b>${total:.2f}</b></div>', unsafe_allow_html=True)
